@@ -34,6 +34,29 @@ const TERMINALS: Record<string, string[]> = {
   S: ["Times Sq-42 St", "Grand Central-42 St"],
 };
 
+// Trains that should NOT use Uptown/Downtown labels — show destination instead
+const NON_TRUNK = new Set(["A", "C", "F", "M", "7", "G", "E"]);
+
+// Tokenize a station/terminal name for fuzzy matching
+function normalize(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+function isTerminalStation(trainKey: string, station: string): boolean {
+  const terms = TERMINALS[trainKey] || [];
+  const st = normalize(station);
+  return terms.some((t) => {
+    const nt = normalize(t);
+    if (!nt || !st) return false;
+    // match if station contains a strong token from terminal or vice versa
+    if (st.includes(nt) || nt.includes(st)) return true;
+    const stTokens = new Set(st.split(" ").filter((w) => w.length >= 4));
+    const ntTokens = nt.split(" ").filter((w) => w.length >= 4);
+    let hits = 0;
+    for (const w of ntTokens) if (stTokens.has(w)) hits++;
+    return hits >= 2;
+  });
+}
+
 function clockToMinutes(timeStr: string): number | null {
   const m = timeStr.match(/^(\d{1,2}):(\d{2})\s*(am|pm)?$/i);
   if (!m) return null;
@@ -59,7 +82,10 @@ export const getEta = createServerFn({ method: "POST" })
       return { arrivals: [] as Arrival[], error: "TAVILY_API_KEY is not configured" };
     }
 
-    const query = `Next two ${data.train} train arrivals at ${data.station} MTA subway station right now, with destination/direction and minutes until arrival`;
+    const trainKey = data.train.trim().toUpperCase();
+    const useDirLabels = !NON_TRUNK.has(trainKey);
+    const atTerminal = isTerminalStation(trainKey, data.station);
+    const query = `Next ${data.train} train arrivals at ${data.station} MTA subway station right now, both directions with destination terminal and minutes until arrival`;
 
     try {
       const res = await fetch("https://api.tavily.com/search", {
@@ -87,12 +113,22 @@ export const getEta = createServerFn({ method: "POST" })
         .join(" ");
       const haystack = `${answer} ${snippets}`;
 
-      const isManhattanStation = /manhattan|times sq|grand central|penn|herald|union sq|columbus|wall st|canal|14 st|34 st|42 st|59 st|72 st|86 st|96 st|125 st|harlem|midtown|downtown manhattan|upper (east|west)/i.test(
-        data.station,
-      );
-
       const arrivals: Arrival[] = [];
       const seen = new Set<string>();
+      const dirSeen = new Set<string>(); // one arrival per direction
+
+      const terms = TERMINALS[trainKey] || [];
+      const term0Norm = terms[0] ? normalize(terms[0]) : "";
+      const term1Norm = terms[1] ? normalize(terms[1]) : "";
+
+      const directionOf = (dest: string): string => {
+        const d = normalize(dest);
+        if (term0Norm && (d.includes(term0Norm) || term0Norm.includes(d))) return "A";
+        if (term1Norm && (d.includes(term1Norm) || term1Norm.includes(d))) return "B";
+        if (/uptown|northbound/i.test(dest)) return "A";
+        if (/downtown|southbound/i.test(dest)) return "B";
+        return dest.toLowerCase();
+      };
 
       // Pattern 1: "to <destination> in <N> min" or "to <destination> - <N> min"
       const toMinRe =
@@ -106,8 +142,7 @@ export const getEta = createServerFn({ method: "POST" })
 
       const pushArrival = (destRaw: string, minutes: number) => {
         let dest = destRaw.trim().replace(/\s+/g, " ");
-        // Reject destinations that are just the train identifier
-        const trainTok = data.train.trim().toUpperCase();
+        const trainTok = trainKey;
         const cleanedDest = dest.replace(/\s*train\s*$/i, "").trim();
         if (
           !cleanedDest ||
@@ -117,16 +152,22 @@ export const getEta = createServerFn({ method: "POST" })
         ) {
           return;
         }
-        // Normalize direction tokens for Manhattan stations
         const dirOnly = /^(uptown|downtown|northbound|southbound|eastbound|westbound)$/i;
         if (dirOnly.test(dest)) {
-          dest = dest.charAt(0).toUpperCase() + dest.slice(1).toLowerCase();
-          if (/northbound/i.test(dest)) dest = "Uptown";
-          if (/southbound/i.test(dest)) dest = "Downtown";
+          if (/northbound|uptown/i.test(dest)) dest = useDirLabels ? "Uptown" : (terms[0] || "Uptown");
+          else if (/southbound|downtown/i.test(dest)) dest = useDirLabels ? "Downtown" : (terms[1] || "Downtown");
+          else dest = dest.charAt(0).toUpperCase() + dest.slice(1).toLowerCase();
+        } else if (!useDirLabels) {
+          // strip stray Uptown/Downtown words for non-trunk trains
+          dest = dest.replace(/\b(uptown|downtown|northbound|southbound)\b/gi, "").trim();
+          if (!dest) return;
         }
         const key = `${dest.toLowerCase()}|${minutes}`;
         if (seen.has(key)) return;
         if (minutes < 0 || minutes > 120) return;
+        const dir = directionOf(dest);
+        if (dirSeen.has(dir)) return; // one arrival per direction
+        dirSeen.add(dir);
         seen.add(key);
         arrivals.push({ destination: dest, minutes });
       };
@@ -152,24 +193,32 @@ export const getEta = createServerFn({ method: "POST" })
       if (arrivals.length === 0) {
         const bareRe = /(\d{1,3})\s*min(?:ute)?s?/gi;
         const mins: number[] = [];
-        while ((m = bareRe.exec(haystack)) && mins.length < 2) {
+        const cap = atTerminal ? 1 : 2;
+        while ((m = bareRe.exec(haystack)) && mins.length < cap) {
           const v = parseInt(m[1], 10);
           if (v >= 0 && v <= 120) mins.push(v);
         }
-        const trainKey = data.train.trim().toUpperCase();
-        const terms = TERMINALS[trainKey] || [];
         mins.forEach((v, i) => {
-          const dest = isManhattanStation
-            ? i === 0
-              ? "Uptown"
-              : "Downtown"
-            : terms[i] || (i === 0 ? "Northbound" : "Southbound");
-          pushArrival(dest, v);
+          let dest: string;
+          if (atTerminal) {
+            // From a terminal, trains only depart toward the OTHER end
+            const stNorm = normalize(data.station);
+            const otherTerm =
+              term0Norm && (stNorm.includes(term0Norm) || term0Norm.includes(stNorm))
+                ? terms[1]
+                : terms[0];
+            dest = otherTerm || (useDirLabels ? "Downtown" : "");
+          } else if (useDirLabels) {
+            dest = i === 0 ? "Uptown" : "Downtown";
+          } else {
+            dest = terms[i] || terms[0] || "";
+          }
+          if (dest) pushArrival(dest, v);
         });
       }
 
       arrivals.sort((a, b) => a.minutes - b.minutes);
-      return { arrivals: arrivals.slice(0, 2), error: null };
+      return { arrivals: arrivals.slice(0, atTerminal ? 1 : 2), error: null };
     } catch (err: any) {
       console.error("Tavily error", err);
       return { arrivals: [] as Arrival[], error: "Failed to reach search service" };
