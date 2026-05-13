@@ -151,10 +151,12 @@ function Index() {
                       </span>
                       <div className="min-w-0">
                         <div className="text-xs uppercase tracking-wider text-muted-foreground">
-                          {t} Train to
+                          {t} Train
                         </div>
                         <div className="truncate text-base font-semibold text-foreground">
-                          {a.destination}
+                          {/^(Uptown|Downtown|Northbound|Southbound|Eastbound|Westbound)$/i.test(a.destination)
+                            ? a.destination
+                            : `to ${a.destination}`}
                         </div>
                       </div>
                     </div>
