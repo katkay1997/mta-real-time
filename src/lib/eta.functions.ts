@@ -6,15 +6,34 @@ const inputSchema = z.object({
   station: z.string().trim().min(1).max(100),
 });
 
+type Arrival = { destination: string; minutes: number };
+
+function clockToMinutes(timeStr: string): number | null {
+  const m = timeStr.match(/^(\d{1,2}):(\d{2})\s*(am|pm)?$/i);
+  if (!m) return null;
+  let h = parseInt(m[1], 10);
+  const mins = parseInt(m[2], 10);
+  const ap = m[3]?.toLowerCase();
+  if (ap === "pm" && h < 12) h += 12;
+  if (ap === "am" && h === 12) h = 0;
+  const now = new Date();
+  const target = new Date(now);
+  target.setHours(h, mins, 0, 0);
+  let diff = Math.round((target.getTime() - now.getTime()) / 60000);
+  if (diff < 0) diff += 24 * 60;
+  if (diff > 120) return null;
+  return diff;
+}
+
 export const getEta = createServerFn({ method: "POST" })
   .inputValidator((data) => inputSchema.parse(data))
   .handler(async ({ data }) => {
     const apiKey = process.env.TAVILY_API_KEY;
     if (!apiKey) {
-      return { eta: null, error: "TAVILY_API_KEY is not configured" };
+      return { arrivals: [] as Arrival[], error: "TAVILY_API_KEY is not configured" };
     }
 
-    const query = `Next ${data.train} train arrival time ETA at ${data.station} MTA subway station right now`;
+    const query = `Next two ${data.train} train arrivals at ${data.station} MTA subway station right now, with destination/direction and minutes until arrival`;
 
     try {
       const res = await fetch("https://api.tavily.com/search", {
@@ -27,12 +46,12 @@ export const getEta = createServerFn({ method: "POST" })
           query,
           search_depth: "advanced",
           include_answer: true,
-          max_results: 5,
+          max_results: 8,
         }),
       });
 
       if (!res.ok) {
-        return { eta: null, error: `Search failed (${res.status})` };
+        return { arrivals: [] as Arrival[], error: `Search failed (${res.status})` };
       }
 
       const json: any = await res.json();
@@ -42,27 +61,78 @@ export const getEta = createServerFn({ method: "POST" })
         .join(" ");
       const haystack = `${answer} ${snippets}`;
 
-      // Try to extract a minute-based ETA
-      const minuteMatch = haystack.match(/(\d{1,3})\s*(?:min(?:ute)?s?)/i);
-      // Or a clock time like 3:45 pm
-      const timeMatch = haystack.match(/\b(\d{1,2}:\d{2}\s*(?:am|pm)?)\b/i);
+      const isManhattanStation = /manhattan|times sq|grand central|penn|herald|union sq|columbus|wall st|canal|14 st|34 st|42 st|59 st|72 st|86 st|96 st|125 st|harlem|midtown|downtown manhattan|upper (east|west)/i.test(
+        data.station,
+      );
 
-      let eta: string | null = null;
-      if (minuteMatch) {
-        eta = `${minuteMatch[1]} min`;
-      } else if (timeMatch) {
-        eta = timeMatch[1];
-      } else if (answer) {
-        eta = answer.length > 200 ? answer.slice(0, 200) + "…" : answer;
+      const arrivals: Arrival[] = [];
+      const seen = new Set<string>();
+
+      // Pattern 1: "to <destination> in <N> min" or "to <destination> - <N> min"
+      const toMinRe =
+        /(?:to|toward(?:s)?|bound for)\s+([A-Z][\w./'\- ]{2,40}?)\s*(?:[-–—,:]| in | arriving in | is | will arrive in )\s*(\d{1,3})\s*min/gi;
+      // Pattern 2: "<Uptown|Downtown> ... <N> min"
+      const dirMinRe =
+        /(uptown|downtown|northbound|southbound|eastbound|westbound)[^.]{0,80}?(\d{1,3})\s*min/gi;
+      // Pattern 3: "to <destination> at <time>"
+      const toTimeRe =
+        /(?:to|toward(?:s)?|bound for)\s+([A-Z][\w./'\- ]{2,40}?)\s*(?:at|arriving at|arrives at)\s*(\d{1,2}:\d{2}\s*(?:am|pm)?)/gi;
+
+      const pushArrival = (destRaw: string, minutes: number) => {
+        let dest = destRaw.trim().replace(/\s+/g, " ");
+        // Normalize direction tokens for Manhattan stations
+        const dirOnly = /^(uptown|downtown|northbound|southbound|eastbound|westbound)$/i;
+        if (dirOnly.test(dest)) {
+          dest = dest.charAt(0).toUpperCase() + dest.slice(1).toLowerCase();
+          if (/northbound/i.test(dest)) dest = "Uptown";
+          if (/southbound/i.test(dest)) dest = "Downtown";
+        }
+        const key = `${dest.toLowerCase()}|${minutes}`;
+        if (seen.has(key)) return;
+        if (minutes < 0 || minutes > 120) return;
+        seen.add(key);
+        arrivals.push({ destination: dest, minutes });
+      };
+
+      let m: RegExpExecArray | null;
+      while ((m = toMinRe.exec(haystack)) && arrivals.length < 4) {
+        pushArrival(m[1], parseInt(m[2], 10));
+      }
+      while ((m = dirMinRe.exec(haystack)) && arrivals.length < 4) {
+        const dirRaw = m[1];
+        let dir = dirRaw;
+        if (/northbound/i.test(dir)) dir = "Uptown";
+        else if (/southbound/i.test(dir)) dir = "Downtown";
+        else dir = dir.charAt(0).toUpperCase() + dir.slice(1).toLowerCase();
+        pushArrival(dir, parseInt(m[2], 10));
+      }
+      while ((m = toTimeRe.exec(haystack)) && arrivals.length < 4) {
+        const mins = clockToMinutes(m[2].trim());
+        if (mins != null) pushArrival(m[1], mins);
       }
 
-      if (!eta) {
-        return { eta: null, error: null };
+      // Fallback: bare minute mentions if we still have nothing
+      if (arrivals.length === 0) {
+        const bareRe = /(\d{1,3})\s*min(?:ute)?s?/gi;
+        const mins: number[] = [];
+        while ((m = bareRe.exec(haystack)) && mins.length < 2) {
+          const v = parseInt(m[1], 10);
+          if (v >= 0 && v <= 120) mins.push(v);
+        }
+        mins.forEach((v, i) => {
+          const dest = isManhattanStation
+            ? i === 0
+              ? "Uptown"
+              : "Downtown"
+            : `${data.train.toUpperCase()} Train`;
+          pushArrival(dest, v);
+        });
       }
 
-      return { eta, error: null };
+      arrivals.sort((a, b) => a.minutes - b.minutes);
+      return { arrivals: arrivals.slice(0, 2), error: null };
     } catch (err: any) {
       console.error("Tavily error", err);
-      return { eta: null, error: "Failed to reach search service" };
+      return { arrivals: [] as Arrival[], error: "Failed to reach search service" };
     }
   });
