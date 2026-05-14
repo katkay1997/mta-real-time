@@ -152,7 +152,12 @@ export const getEta = createServerFn({ method: "POST" })
           if (!stopIdSet.has(parent)) continue;
           const arrTime = stu.arrival?.time ?? stu.departure?.time;
           if (!arrTime) continue;
-          const t = typeof arrTime === "number" ? arrTime : Number(arrTime);
+          const t =
+            typeof arrTime === "number"
+              ? arrTime
+              : typeof (arrTime as any).toNumber === "function"
+                ? (arrTime as any).toNumber()
+                : Number(arrTime);
           const mins = Math.round((t - now) / 60);
           if (mins < 0 || mins > 90) continue;
           byDir[dir].push(mins);
