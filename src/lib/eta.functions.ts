@@ -111,6 +111,22 @@ function labelFor(train: string, dir: "N" | "S"): string {
   return dir === "N" ? t[0] : t[1];
 }
 
+// Detect if the matched station is a terminal of this line
+function detectTerminalDir(train: string, matchedNames: string[]): "N" | "S" | null {
+  const t = TERMINALS[train];
+  if (!t) return null;
+  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const nNorm = norm(t[0]);
+  const sNorm = norm(t[1]);
+  for (const n of matchedNames) {
+    const m = norm(n);
+    // bidirectional substring match (terminal name often differs slightly)
+    if (m && (nNorm.includes(m) || m.includes(nNorm))) return "N";
+    if (m && (sNorm.includes(m) || m.includes(sNorm))) return "S";
+  }
+  return null;
+}
+
 export const getEta = createServerFn({ method: "POST" })
   .inputValidator((data) => inputSchema.parse(data))
   .handler(async ({ data }) => {
@@ -125,6 +141,8 @@ export const getEta = createServerFn({ method: "POST" })
       return { arrivals: [] as Arrival[], error: `Station "${data.station}" not found` };
     }
     const stopIdSet = new Set(stopIds);
+    const matchedNames = STOPS.filter((s) => stopIdSet.has(s.id)).map((s) => s.name);
+    const terminalDir = detectTerminalDir(trainKey, matchedNames);
 
     try {
       const res = await fetch(feedUrl);
@@ -168,11 +186,21 @@ export const getEta = createServerFn({ method: "POST" })
       byDir.S.sort((a, b) => a - b);
 
       const arrivals: Arrival[] = [];
-      for (const dir of ["N", "S"] as const) {
-        const mins = byDir[dir].slice(0, 3);
-        const dest = labelFor(trainKey, dir);
-        for (const m of mins) {
-          arrivals.push({ destination: dest, minutes: m });
+      if (terminalDir) {
+        // Terminal: trains only depart in the OPPOSITE direction → exactly 1 card
+        const opp: "N" | "S" = terminalDir === "N" ? "S" : "N";
+        const m = byDir[opp][0];
+        if (m !== undefined) {
+          arrivals.push({ destination: labelFor(trainKey, opp), minutes: m });
+        }
+      } else {
+        // Non-terminal: exactly 2 cards (one per direction), earliest each.
+        // If a direction has no upcoming train, omit it (do not fake).
+        for (const dir of ["N", "S"] as const) {
+          const m = byDir[dir][0];
+          if (m !== undefined) {
+            arrivals.push({ destination: labelFor(trainKey, dir), minutes: m });
+          }
         }
       }
 
@@ -181,7 +209,10 @@ export const getEta = createServerFn({ method: "POST" })
       }
       return { arrivals, error: null };
     } catch (err: any) {
-      console.error("MTA feed error", err);
-      return { arrivals: [] as Arrival[], error: "Failed to reach MTA realtime feed" };
+      console.error("MTA feed error", err?.message || err, err?.stack);
+      return {
+        arrivals: [] as Arrival[],
+        error: `Failed to load MTA feed: ${err?.message || "unknown error"}`,
+      };
     }
   });
