@@ -1,5 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
+import GtfsRealtimeBindings from "gtfs-realtime-bindings";
+import stopsData from "./mta-stops.json";
 
 const inputSchema = z.object({
   train: z.string().trim().min(1).max(5),
@@ -7,171 +9,174 @@ const inputSchema = z.object({
 });
 
 type Arrival = { destination: string; minutes: number };
+type StopRow = { id: string; name: string; n: string };
 
-const TERMINALS: Record<string, string[]> = {
+const STOPS = stopsData as StopRow[];
+
+// Feed URLs by train line
+const FEEDS: Record<string, string> = {
+  "1": "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs",
+  "2": "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs",
+  "3": "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs",
+  "4": "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs",
+  "5": "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs",
+  "6": "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs",
+  "7": "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs",
+  S: "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs",
+  A: "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-ace",
+  C: "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-ace",
+  E: "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-ace",
+  B: "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-bdfm",
+  D: "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-bdfm",
+  F: "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-bdfm",
+  M: "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-bdfm",
+  G: "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-g",
+  J: "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-jz",
+  Z: "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-jz",
+  N: "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-nqrw",
+  Q: "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-nqrw",
+  R: "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-nqrw",
+  W: "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-nqrw",
+  L: "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-l",
+};
+
+// [North-end terminal, South-end terminal] — N stop_id suffix heads toward index 0
+const TERMINALS: Record<string, [string, string]> = {
   "1": ["Van Cortlandt Park-242 St", "South Ferry"],
-  "2": ["Wakefield-241 St", "Flatbush Ave-Brooklyn College"],
-  "3": ["Harlem-148 St", "New Lots Ave"],
-  "4": ["Woodlawn", "Crown Hts-Utica Ave"],
-  "5": ["Eastchester-Dyre Ave", "Flatbush Ave-Brooklyn College"],
+  "2": ["Wakefield-241 St", "Flatbush Av-Brooklyn College"],
+  "3": ["Harlem-148 St", "New Lots Av"],
+  "4": ["Woodlawn", "Crown Hts-Utica Av"],
+  "5": ["Eastchester-Dyre Av", "Flatbush Av-Brooklyn College"],
   "6": ["Pelham Bay Park", "Brooklyn Bridge-City Hall"],
   "7": ["Flushing-Main St", "34 St-Hudson Yards"],
-  A: ["Inwood-207 St", "Far Rockaway-Mott Ave"],
-  C: ["168 St", "Euclid Ave"],
+  A: ["Inwood-207 St", "Far Rockaway / Lefferts Blvd"],
+  C: ["168 St", "Euclid Av"],
   E: ["Jamaica Center-Parsons/Archer", "World Trade Center"],
   B: ["Bedford Park Blvd", "Brighton Beach"],
-  D: ["Norwood-205 St", "Coney Island-Stillwell Ave"],
-  F: ["Jamaica-179 St", "Coney Island-Stillwell Ave"],
+  D: ["Norwood-205 St", "Coney Island-Stillwell Av"],
+  F: ["Jamaica-179 St", "Coney Island-Stillwell Av"],
   M: ["Forest Hills-71 Av", "Middle Village-Metropolitan Av"],
   G: ["Court Sq", "Church Av"],
   J: ["Jamaica Center-Parsons/Archer", "Broad St"],
   Z: ["Jamaica Center-Parsons/Archer", "Broad St"],
-  L: ["8 Av", "Canarsie-Rockaway Pkwy"],
-  N: ["Astoria-Ditmars Blvd", "Coney Island-Stillwell Ave"],
-  Q: ["96 St-2 Av", "Coney Island-Stillwell Ave"],
+  L: ["8 Av", "Canarsie / Rockaway Pkwy"],
+  N: ["Astoria-Ditmars Blvd", "Coney Island-Stillwell Av"],
+  Q: ["96 St-2 Av", "Coney Island-Stillwell Av"],
   R: ["Forest Hills-71 Av", "Bay Ridge-95 St"],
   W: ["Astoria-Ditmars Blvd", "Whitehall St"],
   S: ["Times Sq-42 St", "Grand Central-42 St"],
 };
 
-// Trains that should NOT use Uptown/Downtown labels — show destination instead
-const NON_TRUNK = new Set(["A", "C", "F", "M", "7", "G", "E"]);
+// Trains that should NOT use Uptown/Downtown labels
+const NON_TRUNK = new Set(["A", "C", "F", "M", "7", "G", "E", "L"]);
 
-// Tokenize a station/terminal name for fuzzy matching
 function normalize(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 }
-function isTerminalStation(trainKey: string, station: string): boolean {
-  const terms = TERMINALS[trainKey] || [];
-  const st = normalize(station);
-  return terms.some((t) => {
-    const nt = normalize(t);
-    if (!nt || !st) return false;
-    // match if station contains a strong token from terminal or vice versa
-    if (st.includes(nt) || nt.includes(st)) return true;
-    const stTokens = new Set(st.split(" ").filter((w) => w.length >= 4));
-    const ntTokens = nt.split(" ").filter((w) => w.length >= 4);
-    let hits = 0;
-    for (const w of ntTokens) if (stTokens.has(w)) hits++;
-    return hits >= 2;
-  });
+
+// Find best matching parent stop IDs for a station name
+function findStops(query: string): string[] {
+  const q = normalize(query);
+  if (!q) return [];
+  const qTokens = q.split(" ").filter((w) => w.length >= 2);
+
+  // Score each stop
+  const scored = STOPS.map((s) => {
+    let score = 0;
+    if (s.n === q) score = 1000;
+    else if (s.n.includes(q)) score = 500 + (q.length / s.n.length) * 100;
+    else if (q.includes(s.n)) score = 400;
+    else {
+      const stopTokens = new Set(s.n.split(" "));
+      let hits = 0;
+      for (const t of qTokens) if (stopTokens.has(t)) hits++;
+      if (hits > 0) score = hits * 50 - Math.abs(s.n.length - q.length);
+    }
+    return { id: s.id, name: s.n, score };
+  }).filter((x) => x.score > 0);
+
+  scored.sort((a, b) => b.score - a.score);
+  if (scored.length === 0) return [];
+  const top = scored[0].score;
+  // Return all stops tied at top (handles complex stations with multiple parent IDs)
+  return scored.filter((x) => x.score >= top - 1).map((x) => x.id);
 }
 
-function clockToMinutes(timeStr: string): number | null {
-  const m = timeStr.match(/^(\d{1,2}):(\d{2})\s*(am|pm)?$/i);
-  if (!m) return null;
-  let h = parseInt(m[1], 10);
-  const mins = parseInt(m[2], 10);
-  const ap = m[3]?.toLowerCase();
-  if (ap === "pm" && h < 12) h += 12;
-  if (ap === "am" && h === 12) h = 0;
-  const now = new Date();
-  const target = new Date(now);
-  target.setHours(h, mins, 0, 0);
-  let diff = Math.round((target.getTime() - now.getTime()) / 60000);
-  if (diff < 0) diff += 24 * 60;
-  if (diff > 120) return null;
-  return diff;
+function labelFor(train: string, dir: "N" | "S"): string {
+  if (!NON_TRUNK.has(train)) {
+    return dir === "N" ? "Uptown" : "Downtown";
+  }
+  const t = TERMINALS[train];
+  if (!t) return dir === "N" ? "Uptown" : "Downtown";
+  return dir === "N" ? t[0] : t[1];
 }
 
 export const getEta = createServerFn({ method: "POST" })
   .inputValidator((data) => inputSchema.parse(data))
   .handler(async ({ data }) => {
-    const apiKey = process.env.TAVILY_API_KEY;
-    if (!apiKey) {
-      return { arrivals: [] as Arrival[], error: "TAVILY_API_KEY is not configured" };
+    const trainKey = data.train.trim().toUpperCase();
+    const feedUrl = FEEDS[trainKey];
+    if (!feedUrl) {
+      return { arrivals: [] as Arrival[], error: `Unsupported train line: ${trainKey}` };
     }
 
-    const trainKey = data.train.trim().toUpperCase();
-    const useDirLabels = !NON_TRUNK.has(trainKey);
-    const atTerminal = isTerminalStation(trainKey, data.station);
-    const query = `Next ${data.train} train arrivals at ${data.station} MTA subway station right now, both directions with destination terminal and minutes until arrival`;
+    const stopIds = findStops(data.station);
+    if (stopIds.length === 0) {
+      return { arrivals: [] as Arrival[], error: `Station "${data.station}" not found` };
+    }
+    const stopIdSet = new Set(stopIds);
 
     try {
-      const res = await fetch("https://api.tavily.com/search", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          query,
-          search_depth: "advanced",
-          include_answer: true,
-          max_results: 8,
-        }),
-      });
-
+      const res = await fetch(feedUrl);
       if (!res.ok) {
-        return { arrivals: [] as Arrival[], error: `Search failed (${res.status})` };
+        return { arrivals: [] as Arrival[], error: `MTA feed error (${res.status})` };
+      }
+      const buf = new Uint8Array(await res.arrayBuffer());
+      const feed = GtfsRealtimeBindings.transit_realtime.FeedMessage.decode(buf);
+
+      const now = Math.floor(Date.now() / 1000);
+      // Group arrivals by direction
+      const byDir: Record<"N" | "S", number[]> = { N: [], S: [] };
+
+      for (const entity of feed.entity) {
+        const tu = entity.tripUpdate;
+        if (!tu || !tu.trip) continue;
+        const routeId = tu.trip.routeId;
+        if (routeId !== trainKey) continue;
+        for (const stu of tu.stopTimeUpdate || []) {
+          const sid = stu.stopId;
+          if (!sid) continue;
+          const dir = sid.slice(-1) as "N" | "S";
+          if (dir !== "N" && dir !== "S") continue;
+          const parent = sid.slice(0, -1);
+          if (!stopIdSet.has(parent)) continue;
+          const arrTime = stu.arrival?.time ?? stu.departure?.time;
+          if (!arrTime) continue;
+          const t = typeof arrTime === "number" ? arrTime : Number(arrTime);
+          const mins = Math.round((t - now) / 60);
+          if (mins < 0 || mins > 90) continue;
+          byDir[dir].push(mins);
+        }
       }
 
-      const json: any = await res.json();
-      const answer: string = json.answer || "";
-      const snippets: string = (json.results || [])
-        .map((r: any) => r.content || "")
-        .join(" ");
-      const haystack = `${answer} ${snippets}`;
-
-      const terms = TERMINALS[trainKey] || [];
-      const term0Norm = terms[0] ? normalize(terms[0]) : "";
-      const term1Norm = terms[1] ? normalize(terms[1]) : "";
-
-      // Collect ALL minute mentions in the haystack
-      const bareRe = /(\d{1,3})\s*min(?:ute)?s?/gi;
-      const allMins: number[] = [];
-      let m: RegExpExecArray | null;
-      while ((m = bareRe.exec(haystack))) {
-        const v = parseInt(m[1], 10);
-        if (v >= 0 && v <= 120) allMins.push(v);
-      }
-      // Also accept clock times like "3:42 pm"
-      const clockRe = /(\d{1,2}:\d{2}\s*(?:am|pm)?)/gi;
-      while ((m = clockRe.exec(haystack))) {
-        const v = clockToMinutes(m[1].trim());
-        if (v != null) allMins.push(v);
-      }
-      allMins.sort((a, b) => a - b);
-      // Dedupe close values
-      const uniqueMins: number[] = [];
-      for (const v of allMins) {
-        if (!uniqueMins.some((u) => Math.abs(u - v) < 1)) uniqueMins.push(v);
-      }
-
-      const labelFor = (idx: 0 | 1): string => {
-        if (useDirLabels) return idx === 0 ? "Uptown" : "Downtown";
-        return terms[idx] || (idx === 0 ? "Uptown" : "Downtown");
-      };
+      byDir.N.sort((a, b) => a - b);
+      byDir.S.sort((a, b) => a - b);
 
       const arrivals: Arrival[] = [];
-
-      if (atTerminal) {
-        // Only one direction: away from the terminal the user is at
-        const stNorm = normalize(data.station);
-        const atFirst =
-          term0Norm && (stNorm.includes(term0Norm) || term0Norm.includes(stNorm));
-        const otherIdx: 0 | 1 = atFirst ? 1 : 0;
-        const dest = useDirLabels
-          ? otherIdx === 0
-            ? "Uptown"
-            : "Downtown"
-          : terms[otherIdx] || labelFor(otherIdx);
-        const mins = uniqueMins[0] ?? 0;
-        arrivals.push({ destination: dest, minutes: mins });
-      } else {
-        // Always two cards, one per direction
-        const m0 = uniqueMins[0];
-        const m1 = uniqueMins.find((v, i) => i > 0 && v !== m0);
-        arrivals.push({ destination: labelFor(0), minutes: m0 ?? 0 });
-        arrivals.push({
-          destination: labelFor(1),
-          minutes: m1 ?? (m0 != null ? m0 + 6 : 0),
-        });
+      for (const dir of ["N", "S"] as const) {
+        const mins = byDir[dir].slice(0, 3);
+        const dest = labelFor(trainKey, dir);
+        for (const m of mins) {
+          arrivals.push({ destination: dest, minutes: m });
+        }
       }
 
+      if (arrivals.length === 0) {
+        return { arrivals, error: null };
+      }
       return { arrivals, error: null };
     } catch (err: any) {
-      console.error("Tavily error", err);
-      return { arrivals: [] as Arrival[], error: "Failed to reach search service" };
+      console.error("MTA feed error", err);
+      return { arrivals: [] as Arrival[], error: "Failed to reach MTA realtime feed" };
     }
   });
