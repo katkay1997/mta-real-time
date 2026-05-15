@@ -44,19 +44,6 @@ function etaColor(min: number | null): string {
   return "#22C55E";
 }
 
-function minutesUntil(iso: string | undefined): number | null {
-  if (!iso) return null;
-  const t = new Date(iso).getTime();
-  if (Number.isNaN(t)) return null;
-  return Math.max(0, Math.round((t - Date.now()) / 60000));
-}
-
-function epochOf(iso: string | undefined): number | null {
-  if (!iso) return null;
-  const t = new Date(iso).getTime();
-  return Number.isNaN(t) ? null : Math.floor(t / 1000);
-}
-
 function BusPage() {
   const fetchBus = useServerFn(getBusArrivals);
   const [busLine, setBusLine] = useState("");
