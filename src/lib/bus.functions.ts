@@ -16,6 +16,14 @@ type Vehicle = {
   occupancy: string;
 };
 
+export type NearbyStop = {
+  stopId: string;
+  name: string;
+  routes: string[];
+  lat: number;
+  lon: number;
+};
+
 function minutesUntil(iso: string | undefined): number | null {
   if (!iso) return null;
   const t = new Date(iso).getTime();
@@ -133,6 +141,96 @@ export const getBusArrivals = createServerFn({ method: "POST" })
         error: "Could not reach MTA BusTime. Try again shortly.",
         visits: [] as Visit[],
         vehicles: [] as Vehicle[],
+      };
+    }
+  });
+
+export const findStopsByAddress = createServerFn({ method: "POST" })
+  .inputValidator((input: { address: string }) => {
+    const address = String(input?.address ?? "").trim().slice(0, 200);
+    if (!address) throw new Error("address is required");
+    return { address };
+  })
+  .handler(async ({ data }) => {
+    const apiKey = process.env.MTA_BUS_API_KEY;
+    if (!apiKey) {
+      return {
+        error: "Server is missing MTA_BUS_API_KEY.",
+        stops: [] as NearbyStop[],
+      };
+    }
+    try {
+      const geoUrl = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(
+        data.address,
+      )}&format=json&limit=1`;
+      const geoRes = await fetch(geoUrl, {
+        headers: {
+          "User-Agent": "MTA-Subway-Feed/1.0 (lovable.app)",
+          Accept: "application/json",
+        },
+      });
+      if (!geoRes.ok) {
+        return {
+          error: `Geocoding failed (${geoRes.status})`,
+          stops: [] as NearbyStop[],
+        };
+      }
+      const geo: any = await geoRes.json();
+      if (!Array.isArray(geo) || geo.length === 0) {
+        return {
+          error:
+            "Address not found. Try adding a borough or city (e.g. 'Brooklyn, NY')",
+          stops: [] as NearbyStop[],
+        };
+      }
+      const lat = parseFloat(geo[0].lat);
+      const lon = parseFloat(geo[0].lon);
+      if (Number.isNaN(lat) || Number.isNaN(lon)) {
+        return {
+          error: "Address not found. Try a more specific intersection.",
+          stops: [] as NearbyStop[],
+        };
+      }
+
+      const stopsUrl = `https://bustime.mta.info/api/where/stops-for-location.json?lat=${lat}&lon=${lon}&latSpan=0.005&lonSpan=0.005&key=${encodeURIComponent(
+        apiKey,
+      )}`;
+      const stopsRes = await fetch(stopsUrl);
+      if (!stopsRes.ok) {
+        return {
+          error: `Stop lookup failed (${stopsRes.status})`,
+          stops: [] as NearbyStop[],
+        };
+      }
+      const stopsJson: any = await stopsRes.json();
+      const list: any[] = stopsJson?.data?.stops ?? stopsJson?.data?.list ?? [];
+      const stops: NearbyStop[] = list.map((s) => ({
+        stopId: String(s.id ?? s.code ?? "").split("_").pop() ?? "",
+        name: String(s.name ?? "—"),
+        routes: Array.isArray(s.routeIds)
+          ? s.routeIds.map((r: string) => String(r).split("_").pop() ?? r)
+          : Array.isArray(s.routes)
+            ? s.routes.map((r: any) =>
+                String(r.shortName ?? r.id ?? "").split("_").pop() ?? "",
+              )
+            : [],
+        lat: Number(s.lat ?? 0),
+        lon: Number(s.lon ?? 0),
+      }));
+      const filtered = stops.filter((s) => s.stopId);
+      if (filtered.length === 0) {
+        return {
+          error:
+            "No bus stops found near this address. Try a nearby intersection.",
+          stops: [] as NearbyStop[],
+        };
+      }
+      return { error: null, stops: filtered };
+    } catch (err) {
+      console.error("findStopsByAddress error", err);
+      return {
+        error: "Could not look up that address. Try again shortly.",
+        stops: [] as NearbyStop[],
       };
     }
   });
