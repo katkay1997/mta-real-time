@@ -16,6 +16,14 @@ type Vehicle = {
   occupancy: string;
 };
 
+export type NearbyStop = {
+  stopId: string;
+  name: string;
+  routes: string[];
+  lat: number;
+  lon: number;
+};
+
 function minutesUntil(iso: string | undefined): number | null {
   if (!iso) return null;
   const t = new Date(iso).getTime();
