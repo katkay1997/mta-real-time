@@ -3,216 +3,237 @@ import { z } from "zod";
 import GtfsRealtimeBindings from "gtfs-realtime-bindings";
 import stopsData from "./mta-stops.json";
 
+type Stop = {
+  id: string;
+  name: string;
+  lat: number;
+  lon: number;
+  n: string;
+  lines: string[];
+};
+
+const STOPS = stopsData as Stop[];
+const STOP_BY_ID = new Map<string, Stop>(STOPS.map((s) => [s.id, s]));
+
+// Map any realtime stop_id (e.g. "101N") → parent stop name.
+function nameForRtStop(rtStopId: string): string | null {
+  const parent = rtStopId.replace(/[NS]$/, "");
+  return STOP_BY_ID.get(parent)?.name ?? null;
+}
+
+const FEED_BASE = "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2F";
+const FEEDS: Record<string, string> = {
+  "1": "gtfs", "2": "gtfs", "3": "gtfs", "4": "gtfs", "5": "gtfs",
+  "6": "gtfs", "7": "gtfs", GS: "gtfs", S: "gtfs",
+  A: "gtfs-ace", C: "gtfs-ace", E: "gtfs-ace", H: "gtfs-ace", FS: "gtfs-ace",
+  B: "gtfs-bdfm", D: "gtfs-bdfm", F: "gtfs-bdfm", M: "gtfs-bdfm",
+  G: "gtfs-g",
+  J: "gtfs-jz", Z: "gtfs-jz",
+  N: "gtfs-nqrw", Q: "gtfs-nqrw", R: "gtfs-nqrw", W: "gtfs-nqrw",
+  L: "gtfs-l",
+  SI: "gtfs-si", SIR: "gtfs-si",
+};
+
+const NORTH_LABEL: Record<string, string> = {
+  "1": "Uptown", "2": "Uptown", "3": "Uptown", "4": "Uptown", "5": "Uptown",
+  "6": "Uptown", B: "Uptown", D: "Uptown", N: "Uptown", Q: "Uptown",
+  R: "Uptown", W: "Uptown", A: "Uptown", C: "Uptown",
+  "7": "to Flushing", E: "to Jamaica", F: "to Queens", M: "to Forest Hills",
+  G: "to Court Sq", J: "to Jamaica", Z: "to Jamaica", L: "to 8 Av",
+  SI: "to St George", SIR: "to St George",
+};
+const SOUTH_LABEL: Record<string, string> = {
+  "1": "Downtown", "2": "Downtown", "3": "Downtown", "4": "Downtown",
+  "5": "Downtown", "6": "Downtown", B: "Downtown", D: "Downtown",
+  N: "Downtown", Q: "Downtown", R: "Downtown", W: "Downtown",
+  A: "Downtown", C: "Downtown",
+  "7": "to Manhattan", E: "to Manhattan", F: "to Brooklyn", M: "to Brooklyn",
+  G: "to Church Av", J: "to Manhattan", Z: "to Manhattan",
+  L: "to Canarsie", SI: "to Tottenville", SIR: "to Tottenville",
+};
+
+function dirLabel(route: string, dir: "N" | "S"): string {
+  if (dir === "N") return NORTH_LABEL[route] ?? "Uptown";
+  return SOUTH_LABEL[route] ?? "Downtown";
+}
+
 const inputSchema = z.object({
-  train: z.string().trim().min(1).max(5),
-  station: z.string().trim().min(1).max(100),
+  stopId: z.string().trim().min(2).max(10),
+  trains: z.array(z.string().min(1).max(5)).optional(),
 });
 
-type Arrival = { destination: string; minutes: number };
-type StopRow = { id: string; name: string; n: string };
-
-const STOPS = stopsData as StopRow[];
-
-// Feed URLs by train line
-const FEEDS: Record<string, string> = {
-  "1": "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs",
-  "2": "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs",
-  "3": "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs",
-  "4": "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs",
-  "5": "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs",
-  "6": "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs",
-  "7": "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs",
-  S: "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs",
-  A: "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-ace",
-  C: "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-ace",
-  E: "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-ace",
-  B: "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-bdfm",
-  D: "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-bdfm",
-  F: "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-bdfm",
-  M: "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-bdfm",
-  G: "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-g",
-  J: "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-jz",
-  Z: "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-jz",
-  N: "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-nqrw",
-  Q: "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-nqrw",
-  R: "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-nqrw",
-  W: "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-nqrw",
-  L: "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-l",
+export type Arrival = {
+  route: string;
+  destination: string;
+  direction: "N" | "S";
+  directionLabel: string;
+  minutes: number;
+  arrivalEpoch: number;
+  tripId: string;
 };
 
-// [North-end terminal, South-end terminal] — N stop_id suffix heads toward index 0
-const TERMINALS: Record<string, [string, string]> = {
-  "1": ["Van Cortlandt Park-242 St", "South Ferry"],
-  "2": ["Wakefield-241 St", "Flatbush Av-Brooklyn College"],
-  "3": ["Harlem-148 St", "New Lots Av"],
-  "4": ["Woodlawn", "Crown Hts-Utica Av"],
-  "5": ["Eastchester-Dyre Av", "Flatbush Av-Brooklyn College"],
-  "6": ["Pelham Bay Park", "Brooklyn Bridge-City Hall"],
-  "7": ["Flushing-Main St", "34 St-Hudson Yards"],
-  A: ["Inwood-207 St", "Far Rockaway / Lefferts Blvd"],
-  C: ["168 St", "Euclid Av"],
-  E: ["Jamaica Center-Parsons/Archer", "World Trade Center"],
-  B: ["Bedford Park Blvd", "Brighton Beach"],
-  D: ["Norwood-205 St", "Coney Island-Stillwell Av"],
-  F: ["Jamaica-179 St", "Coney Island-Stillwell Av"],
-  M: ["Forest Hills-71 Av", "Middle Village-Metropolitan Av"],
-  G: ["Court Sq", "Church Av"],
-  J: ["Jamaica Center-Parsons/Archer", "Broad St"],
-  Z: ["Jamaica Center-Parsons/Archer", "Broad St"],
-  L: ["8 Av", "Canarsie / Rockaway Pkwy"],
-  N: ["Astoria-Ditmars Blvd", "Coney Island-Stillwell Av"],
-  Q: ["96 St-2 Av", "Coney Island-Stillwell Av"],
-  R: ["Forest Hills-71 Av", "Bay Ridge-95 St"],
-  W: ["Astoria-Ditmars Blvd", "Whitehall St"],
-  S: ["Times Sq-42 St", "Grand Central-42 St"],
-};
-
-// Trains that should NOT use Uptown/Downtown labels
-const NON_TRUNK = new Set(["A", "C", "F", "M", "7", "G", "E", "L"]);
-
-function normalize(s: string): string {
-  return s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+async function fetchFeed(slug: string) {
+  const res = await fetch(FEED_BASE + slug, {
+    headers: { "User-Agent": "lovable-mta-tracker/1.0" },
+  });
+  if (!res.ok) throw new Error(`MTA feed ${slug} ${res.status}`);
+  const buf = new Uint8Array(await res.arrayBuffer());
+  return GtfsRealtimeBindings.transit_realtime.FeedMessage.decode(buf);
 }
 
-// Find best matching parent stop IDs for a station name
-function findStops(query: string): string[] {
-  const q = normalize(query);
-  if (!q) return [];
-  const qTokens = q.split(" ").filter((w) => w.length >= 2);
-
-  // Score each stop
-  const scored = STOPS.map((s) => {
-    let score = 0;
-    if (s.n === q) score = 1000;
-    else if (s.n.includes(q)) score = 500 + (q.length / s.n.length) * 100;
-    else if (q.includes(s.n)) score = 400;
-    else {
-      const stopTokens = new Set(s.n.split(" "));
-      let hits = 0;
-      for (const t of qTokens) if (stopTokens.has(t)) hits++;
-      if (hits > 0) score = hits * 50 - Math.abs(s.n.length - q.length);
-    }
-    return { id: s.id, name: s.n, score };
-  }).filter((x) => x.score > 0);
-
-  scored.sort((a, b) => b.score - a.score);
-  if (scored.length === 0) return [];
-  const top = scored[0].score;
-  // Return all stops tied at top (handles complex stations with multiple parent IDs)
-  return scored.filter((x) => x.score >= top - 1).map((x) => x.id);
-}
-
-function labelFor(train: string, dir: "N" | "S"): string {
-  if (!NON_TRUNK.has(train)) {
-    return dir === "N" ? "Uptown" : "Downtown";
+function toNum(v: unknown): number {
+  if (v == null) return 0;
+  if (typeof v === "number") return v;
+  if (typeof v === "string") return Number(v);
+  if (typeof (v as { toNumber?: () => number }).toNumber === "function") {
+    return (v as { toNumber: () => number }).toNumber();
   }
-  const t = TERMINALS[train];
-  if (!t) return dir === "N" ? "Uptown" : "Downtown";
-  return dir === "N" ? t[0] : t[1];
-}
-
-// Detect if the matched station is a terminal of this line
-function detectTerminalDir(train: string, matchedNames: string[]): "N" | "S" | null {
-  const t = TERMINALS[train];
-  if (!t) return null;
-  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-  const nNorm = norm(t[0]);
-  const sNorm = norm(t[1]);
-  for (const n of matchedNames) {
-    const m = norm(n);
-    // bidirectional substring match (terminal name often differs slightly)
-    if (m && (nNorm.includes(m) || m.includes(nNorm))) return "N";
-    if (m && (sNorm.includes(m) || m.includes(sNorm))) return "S";
-  }
-  return null;
+  return Number(v);
 }
 
 export const getEta = createServerFn({ method: "POST" })
-  .inputValidator((data) => inputSchema.parse(data))
+  .inputValidator((d) => inputSchema.parse(d))
   .handler(async ({ data }) => {
-    const trainKey = data.train.trim().toUpperCase();
-    const feedUrl = FEEDS[trainKey];
-    if (!feedUrl) {
-      return { arrivals: [] as Arrival[], error: `Unsupported train line: ${trainKey}` };
+    const stop = STOP_BY_ID.get(data.stopId);
+    if (!stop) {
+      return { arrivals: [] as Arrival[], stop: null, error: "Station not found" };
+    }
+    const wanted = new Set(
+      (data.trains && data.trains.length > 0 ? data.trains : stop.lines).map((t) =>
+        t.toUpperCase(),
+      ),
+    );
+
+    // Group requested lines by feed slug
+    const slugs = new Set<string>();
+    for (const line of wanted) {
+      const slug = FEEDS[line];
+      if (slug) slugs.add(slug);
+    }
+    if (slugs.size === 0) {
+      return { arrivals: [], stop, error: "No supported lines for this station" };
     }
 
-    const stopIds = findStops(data.station);
-    if (stopIds.length === 0) {
-      return { arrivals: [] as Arrival[], error: `Station "${data.station}" not found` };
-    }
-    const stopIdSet = new Set(stopIds);
-    const matchedNames = STOPS.filter((s) => stopIdSet.has(s.id)).map((s) => s.name);
-    const terminalDir = detectTerminalDir(trainKey, matchedNames);
-
+    const now = Math.floor(Date.now() / 1000);
+    const out: Arrival[] = [];
     try {
-      const res = await fetch(feedUrl);
-      if (!res.ok) {
-        return { arrivals: [] as Arrival[], error: `MTA feed error (${res.status})` };
-      }
-      const buf = new Uint8Array(await res.arrayBuffer());
-      const feed = GtfsRealtimeBindings.transit_realtime.FeedMessage.decode(buf);
-
-      const now = Math.floor(Date.now() / 1000);
-      // Group arrivals by direction
-      const byDir: Record<"N" | "S", number[]> = { N: [], S: [] };
-
-      for (const entity of feed.entity) {
-        const tu = entity.tripUpdate;
-        if (!tu || !tu.trip) continue;
-        const routeId = tu.trip.routeId;
-        if (routeId !== trainKey) continue;
-        for (const stu of tu.stopTimeUpdate || []) {
-          const sid = stu.stopId;
-          if (!sid) continue;
-          const dir = sid.slice(-1) as "N" | "S";
-          if (dir !== "N" && dir !== "S") continue;
-          const parent = sid.slice(0, -1);
-          if (!stopIdSet.has(parent)) continue;
-          const arrTime = stu.arrival?.time ?? stu.departure?.time;
-          if (!arrTime) continue;
-          const t =
-            typeof arrTime === "number"
-              ? arrTime
-              : typeof (arrTime as any).toNumber === "function"
-                ? (arrTime as any).toNumber()
-                : Number(arrTime);
-          const mins = Math.round((t - now) / 60);
-          if (mins < 0 || mins > 90) continue;
-          byDir[dir].push(mins);
-        }
-      }
-
-      byDir.N.sort((a, b) => a - b);
-      byDir.S.sort((a, b) => a - b);
-
-      const arrivals: Arrival[] = [];
-      if (terminalDir) {
-        // Terminal: trains only depart in the OPPOSITE direction → exactly 1 card
-        const opp: "N" | "S" = terminalDir === "N" ? "S" : "N";
-        const m = byDir[opp][0];
-        if (m !== undefined) {
-          arrivals.push({ destination: labelFor(trainKey, opp), minutes: m });
-        }
-      } else {
-        // Non-terminal: exactly 2 cards (one per direction), earliest each.
-        // If a direction has no upcoming train, omit it (do not fake).
-        for (const dir of ["N", "S"] as const) {
-          const m = byDir[dir][0];
-          if (m !== undefined) {
-            arrivals.push({ destination: labelFor(trainKey, dir), minutes: m });
+      const feeds = await Promise.all([...slugs].map((s) => fetchFeed(s)));
+      for (const feed of feeds) {
+        for (const entity of feed.entity) {
+          const tu = entity.tripUpdate;
+          if (!tu || !tu.trip) continue;
+          const route = tu.trip.routeId;
+          if (!route || !wanted.has(route.toUpperCase())) continue;
+          const stus = tu.stopTimeUpdate || [];
+          // Find arrival at requested stop
+          let myStu: (typeof stus)[number] | null = null;
+          for (const s of stus) {
+            if (!s.stopId) continue;
+            if (s.stopId.replace(/[NS]$/, "") === stop.id) {
+              myStu = s;
+              break;
+            }
           }
+          if (!myStu || !myStu.stopId) continue;
+          const dir = myStu.stopId.slice(-1) as "N" | "S";
+          if (dir !== "N" && dir !== "S") continue;
+          const t = toNum(myStu.arrival?.time ?? myStu.departure?.time);
+          if (!t) continue;
+          const minutes = Math.round((t - now) / 60);
+          if (minutes < 0 || minutes > 90) continue;
+
+          // Destination = last stopTimeUpdate's parent stop name
+          let destination: string | null = null;
+          for (let i = stus.length - 1; i >= 0; i--) {
+            const last = stus[i];
+            if (last?.stopId) {
+              destination = nameForRtStop(last.stopId);
+              if (destination) break;
+            }
+          }
+          if (!destination) destination = dirLabel(route, dir);
+
+          out.push({
+            route: route.toUpperCase(),
+            destination,
+            direction: dir,
+            directionLabel: dirLabel(route, dir),
+            minutes,
+            arrivalEpoch: t,
+            tripId: tu.trip.tripId || "",
+          });
         }
       }
-
-      if (arrivals.length === 0) {
-        return { arrivals, error: null };
-      }
-      return { arrivals, error: null };
-    } catch (err: any) {
-      console.error("MTA feed error", err?.message || err, err?.stack);
+    } catch (err) {
       return {
         arrivals: [] as Arrival[],
-        error: `Failed to load MTA feed: ${err?.message || "unknown error"}`,
+        stop,
+        error: `Failed to load MTA feed: ${(err as Error).message}`,
       };
+    }
+
+    out.sort((a, b) => a.arrivalEpoch - b.arrivalEpoch);
+    return { arrivals: out, stop, error: null as string | null };
+  });
+
+const alertsInput = z.object({
+  routes: z.array(z.string().min(1).max(5)).min(1).max(30),
+});
+
+export type ServiceAlert = {
+  id: string;
+  header: string;
+  description: string;
+  routes: string[];
+};
+
+export const getAlerts = createServerFn({ method: "POST" })
+  .inputValidator((d) => alertsInput.parse(d))
+  .handler(async ({ data }) => {
+    const wanted = new Set(data.routes.map((r) => r.toUpperCase()));
+    try {
+      const res = await fetch(
+        "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/camsys%2Fsubway-alerts",
+        { headers: { "User-Agent": "lovable-mta-tracker/1.0" } },
+      );
+      if (!res.ok) return { alerts: [] as ServiceAlert[], error: null };
+      const buf = new Uint8Array(await res.arrayBuffer());
+      const feed = GtfsRealtimeBindings.transit_realtime.FeedMessage.decode(buf);
+      const now = Math.floor(Date.now() / 1000);
+      const out: ServiceAlert[] = [];
+      for (const entity of feed.entity) {
+        const a = entity.alert;
+        if (!a) continue;
+        // active period filter
+        const periods = a.activePeriod || [];
+        if (periods.length > 0) {
+          const active = periods.some((p) => {
+            const start = toNum(p.start);
+            const end = toNum(p.end);
+            return (start === 0 || start <= now) && (end === 0 || end >= now);
+          });
+          if (!active) continue;
+        }
+        const routes = new Set<string>();
+        for (const inf of a.informedEntity || []) {
+          if (inf.routeId) routes.add(inf.routeId.toUpperCase());
+        }
+        let hit = false;
+        for (const r of routes) if (wanted.has(r)) { hit = true; break; }
+        if (!hit) continue;
+
+        const header = a.headerText?.translation?.[0]?.text || "";
+        const description = a.descriptionText?.translation?.[0]?.text || "";
+        if (!header) continue;
+        out.push({
+          id: entity.id || header.slice(0, 40),
+          header,
+          description,
+          routes: [...routes],
+        });
+      }
+      return { alerts: out.slice(0, 5), error: null as string | null };
+    } catch (err) {
+      return { alerts: [] as ServiceAlert[], error: (err as Error).message };
     }
   });
