@@ -9,6 +9,7 @@ import {
   nearbyStations,
   type Station,
 } from "@/lib/stations";
+import { NavBar } from "@/components/NavBar";
 
 export const Route = createFileRoute("/")({
   component: Index,
@@ -186,13 +187,23 @@ function Index() {
   return (
     <main
       className="min-h-screen text-white"
-      style={{ background: "#0a0a0a" }}
+      style={{
+        background:
+          "linear-gradient(135deg, #0d1b2a 0%, #1b2a4a 50%, #0d1b2a 100%)",
+      }}
     >
+      <NavBar />
       <div className="mx-auto w-full max-w-2xl px-4 py-6 sm:py-10">
         {/* Header */}
         <header className="mb-5">
-          <h1 className="text-2xl font-extrabold tracking-tight sm:text-3xl">
-            NYC Subway Live
+          <h1
+            className="text-2xl font-extrabold tracking-tight sm:text-3xl"
+            style={{
+              textShadow:
+                "0 0 20px rgba(0, 120, 255, 0.6), 0 0 40px rgba(0, 80, 200, 0.3)",
+            }}
+          >
+            MTA Subway Feed
           </h1>
           <p className="mt-1 text-xs text-neutral-400">
             Real-time arrivals from the MTA
