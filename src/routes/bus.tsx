@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { NavBar } from "@/components/NavBar";
-import { getBusArrivals } from "@/lib/bus.functions";
+import { getBusArrivals, findStopsByAddress, type NearbyStop } from "@/lib/bus.functions";
 
 export const Route = createFileRoute("/bus")({
   component: BusPage,
@@ -46,8 +46,13 @@ function etaColor(min: number | null): string {
 
 function BusPage() {
   const fetchBus = useServerFn(getBusArrivals);
+  const lookupStops = useServerFn(findStopsByAddress);
   const [busLine, setBusLine] = useState("");
-  const [stop, setStop] = useState("");
+  const [address, setAddress] = useState("");
+  const [nearbyStops, setNearbyStops] = useState<NearbyStop[]>([]);
+  const [selectedStopId, setSelectedStopId] = useState<string>("");
+  const [lookupLoading, setLookupLoading] = useState(false);
+  const [lookupError, setLookupError] = useState<string | null>(null);
   const [submitted, setSubmitted] = useState<{ line: string; stop: string } | null>(
     null,
   );
@@ -120,9 +125,33 @@ function BusPage() {
   const onSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const l = busLine.trim();
-    const s = stop.trim();
-    if (!l || !s) return;
-    setSubmitted({ line: l, stop: s });
+    if (!l) return;
+    if (!selectedStopId) {
+      setLookupError("Please select a stop from the list before searching.");
+      return;
+    }
+    setSubmitted({ line: l, stop: selectedStopId });
+  };
+
+  const onLookup = async () => {
+    const a = address.trim();
+    if (!a) return;
+    setLookupLoading(true);
+    setLookupError(null);
+    setNearbyStops([]);
+    setSelectedStopId("");
+    try {
+      const res = await lookupStops({ data: { address: a } });
+      if (res.error) {
+        setLookupError(res.error);
+        return;
+      }
+      setNearbyStops(res.stops as NearbyStop[]);
+    } catch (err) {
+      setLookupError((err as Error).message || "Address lookup failed.");
+    } finally {
+      setLookupLoading(false);
+    }
   };
 
   const secondsAgo = lastUpdate
@@ -157,18 +186,93 @@ function BusPage() {
             className="w-full rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-base text-white placeholder:text-neutral-500 focus:border-blue-400/60 focus:outline-none"
             autoComplete="off"
           />
-          <input
-            type="text"
-            value={stop}
-            onChange={(e) => setStop(e.target.value)}
-            placeholder="Bus stop (5-digit MTA stop ID)"
-            className="w-full rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-base text-white placeholder:text-neutral-500 focus:border-blue-400/60 focus:outline-none"
-            autoComplete="off"
-          />
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={address}
+              onChange={(e) => setAddress(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  onLookup();
+                }
+              }}
+              placeholder="Address or intersection (e.g. Flatbush Ave & Church Ave, Brooklyn)"
+              className="flex-1 rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-base text-white placeholder:text-neutral-500 focus:border-blue-400/60 focus:outline-none"
+              autoComplete="off"
+            />
+            <button
+              type="button"
+              onClick={onLookup}
+              disabled={!address.trim() || lookupLoading}
+              className="shrink-0 rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-semibold text-white transition hover:bg-white/10 disabled:opacity-50"
+            >
+              {lookupLoading ? "…" : "Find stops"}
+            </button>
+          </div>
+
+          {lookupError && (
+            <div className="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300">
+              {lookupError}
+            </div>
+          )}
+
+          {nearbyStops.length > 0 && (
+            <div className="rounded-xl border border-white/10 bg-black/30 p-2">
+              <div className="mb-1 px-2 pt-1 text-[11px] font-bold uppercase tracking-widest text-neutral-400">
+                Select a stop ({nearbyStops.length} nearby)
+              </div>
+              <ul className="max-h-64 overflow-y-auto">
+                {nearbyStops.map((s) => {
+                  const active = selectedStopId === s.stopId;
+                  return (
+                    <li key={s.stopId}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedStopId(s.stopId);
+                          setLookupError(null);
+                        }}
+                        className={`flex w-full items-start justify-between gap-3 rounded-lg px-3 py-2 text-left transition ${
+                          active
+                            ? "bg-blue-500/20 text-white"
+                            : "text-neutral-200 hover:bg-white/5"
+                        }`}
+                      >
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-sm font-semibold">
+                            {s.name}
+                          </div>
+                          {s.routes.length > 0 && (
+                            <div className="mt-0.5 flex flex-wrap gap-1">
+                              {s.routes.slice(0, 8).map((r) => (
+                                <span
+                                  key={r}
+                                  className="rounded bg-white/10 px-1.5 py-0.5 text-[10px] font-bold text-neutral-200"
+                                >
+                                  {r}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                        {active && (
+                          <span className="shrink-0 text-[11px] font-bold text-blue-200">
+                            ✓
+                          </span>
+                        )}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          )}
+
           <button
             type="submit"
             className="w-full rounded-xl bg-red-600 px-4 py-3 text-base font-bold text-white transition hover:bg-red-500 disabled:opacity-50"
-            disabled={!busLine.trim() || !stop.trim()}
+            disabled={!busLine.trim() || !selectedStopId}
           >
             Search
           </button>
