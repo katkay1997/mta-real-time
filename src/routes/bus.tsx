@@ -1,6 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useServerFn } from "@tanstack/react-start";
 import { NavBar } from "@/components/NavBar";
+import { getBusArrivals } from "@/lib/bus.functions";
 
 export const Route = createFileRoute("/bus")({
   component: BusPage,
@@ -56,8 +58,7 @@ function epochOf(iso: string | undefined): number | null {
 }
 
 function BusPage() {
-  const apiKey = import.meta.env.VITE_MTA_BUS_API_KEY as string | undefined;
-
+  const fetchBus = useServerFn(getBusArrivals);
   const [busLine, setBusLine] = useState("");
   const [stop, setStop] = useState("");
   const [submitted, setSubmitted] = useState<{ line: string; stop: string } | null>(
@@ -74,101 +75,27 @@ function BusPage() {
 
   const fetchData = useCallback(
     async (line: string, stopId: string) => {
-      if (!apiKey) {
-        setError(
-          "API key not configured. Please add your MTA BusTime API key.",
-        );
-        return;
-      }
       abortRef.current?.abort();
       const ac = new AbortController();
       abortRef.current = ac;
       setLoading(true);
       setError(null);
       try {
-        const lineRef = `MTA NYCT_${line.toUpperCase()}`;
-        const smUrl = `https://bustime.mta.info/api/siri/stop-monitoring.json?key=${encodeURIComponent(
-          apiKey,
-        )}&MonitoringRef=${encodeURIComponent(stopId)}&LineRef=${encodeURIComponent(
-          lineRef,
-        )}&version=2`;
-        const vmUrl = `https://bustime.mta.info/api/siri/vehicle-monitoring.json?key=${encodeURIComponent(
-          apiKey,
-        )}&LineRef=${encodeURIComponent(lineRef)}&version=2`;
-
-        const [smRes, vmRes] = await Promise.all([
-          fetch(smUrl, { signal: ac.signal }),
-          fetch(vmUrl, { signal: ac.signal }),
-        ]);
-        if (!smRes.ok) throw new Error(`Stop monitoring failed (${smRes.status})`);
-        const sm = await smRes.json();
-        const vm = vmRes.ok ? await vmRes.json() : null;
-
-        const smDelivery =
-          sm?.Siri?.ServiceDelivery?.StopMonitoringDelivery?.[0];
-        const errText =
-          smDelivery?.ErrorCondition?.OtherError?.ErrorText ||
-          sm?.Siri?.ServiceDelivery?.ErrorCondition?.OtherError?.ErrorText;
-        if (errText) {
-          setVisits([]);
-          setVehicles([]);
-          setError(errText);
+        const result = await fetchBus({
+          data: { line: line.toUpperCase(), stop: stopId },
+          signal: ac.signal,
+        });
+        if (ac.signal.aborted) return;
+        if (result.error) {
+          setVisits(result.visits as Visit[]);
+          setVehicles(result.vehicles as Vehicle[]);
+          setError(result.error);
           setLastUpdate(Date.now());
           setSecondsLeft(REFRESH_SECONDS);
           return;
         }
-
-        const monitored: any[] = smDelivery?.MonitoredStopVisit ?? [];
-        const parsedVisits: Visit[] = monitored.map((v) => {
-          const j = v.MonitoredVehicleJourney || {};
-          const call = j.MonitoredCall || {};
-          const dest = Array.isArray(j.DestinationName)
-            ? j.DestinationName[0]
-            : j.DestinationName;
-          const route =
-            (j.PublishedLineName &&
-              (Array.isArray(j.PublishedLineName)
-                ? j.PublishedLineName[0]
-                : j.PublishedLineName)) ||
-            (j.LineRef ? String(j.LineRef).split("_").pop() : line.toUpperCase());
-          return {
-            route: String(route).toUpperCase(),
-            destination: dest || "—",
-            etaMin: minutesUntil(call.ExpectedArrivalTime),
-            expectedEpoch: epochOf(call.ExpectedArrivalTime),
-            stopsAway:
-              typeof call.NumberOfStopsAway === "number"
-                ? call.NumberOfStopsAway
-                : null,
-            proximity: call.ArrivalProximityText || "",
-          };
-        });
-        parsedVisits.sort(
-          (a, b) => (a.etaMin ?? 999) - (b.etaMin ?? 999),
-        );
-
-        const vmActivities: any[] =
-          vm?.Siri?.ServiceDelivery?.VehicleMonitoringDelivery?.[0]
-            ?.VehicleActivity ?? [];
-        const parsedVehicles: Vehicle[] = vmActivities.map((a) => {
-          const j = a.MonitoredVehicleJourney || {};
-          return {
-            ref: String(j.VehicleRef || "").split("_").pop() || "—",
-            progress: j.ProgressStatus
-              ? Array.isArray(j.ProgressStatus)
-                ? j.ProgressStatus.join(", ")
-                : String(j.ProgressStatus)
-              : "in transit",
-            location:
-              j.MonitoredCall?.StopPointName ||
-              j.OnwardCalls?.OnwardCall?.[0]?.StopPointName ||
-              "—",
-            occupancy: j.Occupancy || j.OccupancyStatus || "",
-          };
-        });
-
-        setVisits(parsedVisits);
-        setVehicles(parsedVehicles);
+        setVisits(result.visits as Visit[]);
+        setVehicles(result.vehicles as Vehicle[]);
         setLastUpdate(Date.now());
         setSecondsLeft(REFRESH_SECONDS);
       } catch (err) {
@@ -182,7 +109,7 @@ function BusPage() {
         setLoading(false);
       }
     },
-    [apiKey],
+    [fetchBus],
   );
 
   useEffect(() => {
@@ -233,13 +160,6 @@ function BusPage() {
             Real-time bus arrivals from MTA BusTime
           </p>
         </header>
-
-        {!apiKey && (
-          <div className="mb-4 rounded-md border border-yellow-500/30 bg-yellow-500/10 px-3 py-2 text-sm text-yellow-200">
-            API key not configured. Please add your MTA BusTime API key as
-            <code className="mx-1 rounded bg-black/30 px-1">VITE_MTA_BUS_API_KEY</code>.
-          </div>
-        )}
 
         <form onSubmit={onSubmit} className="space-y-3">
           <input
