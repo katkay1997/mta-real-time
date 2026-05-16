@@ -39,13 +39,14 @@ function epochOf(iso: string | undefined): number | null {
 
 export const getBusArrivals = createServerFn({ method: "POST" })
   .inputValidator((input: { line: string; stop: string }) => {
-    const raw = String(input?.line ?? "").trim().toUpperCase().slice(0, 16);
+    const rawIn = String(input?.line ?? "").trim().toUpperCase().replace(/\s+/g, " ");
     const stop = String(input?.stop ?? "").trim().slice(0, 16);
-    if (!raw || !stop) throw new Error("line and stop are required");
-    // Detect SBS variants: "M15 SBS", "M15SBS", "M15+SBS", "M15+", "B46-SBS"
-    const isSBS = /SBS/.test(raw) || /\+/.test(raw);
-    const base = raw.replace(/SBS/g, "").replace(/[^A-Z0-9]/g, "");
-    if (!/^[A-Z0-9]+$/.test(base)) throw new Error("invalid line");
+    if (!rawIn) throw new Error("Please enter a bus route number");
+    if (!stop) throw new Error("stop is required");
+    // Detect SBS: " SBS", "-SBS", or trailing "SBS" → "+"
+    const isSBS = /(\s|-)?SBS$/.test(rawIn) || /\+$/.test(rawIn);
+    const base = rawIn.replace(/(\s|-)?SBS$/, "").replace(/\+$/, "").replace(/\s+/g, "");
+    if (!/^[A-Z]{1,3}[0-9]{1,3}$/.test(base)) throw new Error("invalid line");
     const line = isSBS ? `${base}+` : base;
     if (!/^[0-9]+$/.test(stop)) throw new Error("invalid stop id");
     return { line, stop };
