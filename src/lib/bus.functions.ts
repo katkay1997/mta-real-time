@@ -39,10 +39,14 @@ function epochOf(iso: string | undefined): number | null {
 
 export const getBusArrivals = createServerFn({ method: "POST" })
   .inputValidator((input: { line: string; stop: string }) => {
-    const line = String(input?.line ?? "").trim().toUpperCase().slice(0, 16);
+    const raw = String(input?.line ?? "").trim().toUpperCase().slice(0, 16);
     const stop = String(input?.stop ?? "").trim().slice(0, 16);
-    if (!line || !stop) throw new Error("line and stop are required");
-    if (!/^[A-Z0-9]+$/.test(line)) throw new Error("invalid line");
+    if (!raw || !stop) throw new Error("line and stop are required");
+    // Detect SBS variants: "M15 SBS", "M15SBS", "M15+SBS", "M15+", "B46-SBS"
+    const isSBS = /SBS/.test(raw) || /\+/.test(raw);
+    const base = raw.replace(/SBS/g, "").replace(/[^A-Z0-9]/g, "");
+    if (!/^[A-Z0-9]+$/.test(base)) throw new Error("invalid line");
+    const line = isSBS ? `${base}+` : base;
     if (!/^[0-9]+$/.test(stop)) throw new Error("invalid stop id");
     return { line, stop };
   })
