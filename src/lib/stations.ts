@@ -9,7 +9,10 @@ export type Station = {
   lines: string[];
 };
 
-export const STATIONS = stopsData as Station[];
+export const STATIONS = (stopsData as Station[]).map((s) => ({
+  ...s,
+  lines: s.lines.filter((l) => l !== "FX" && l !== "7X"),
+}));
 const STATION_BY_ID = new Map<string, Station>(STATIONS.map((s) => [s.id, s]));
 
 export function getStation(id: string): Station | undefined {
