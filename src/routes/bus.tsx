@@ -59,7 +59,7 @@ function BusPage() {
   const [busLine, setBusLine] = useState("");
   const [address, setAddress] = useState("");
   const [nearbyStops, setNearbyStops] = useState<NearbyStop[]>([]);
-  const [selectedStopId, setSelectedStopId] = useState<string>("");
+  const [selectedStopIds, setSelectedStopIds] = useState<string>("");
   const [lookupLoading, setLookupLoading] = useState(false);
   const [lookupError, setLookupError] = useState<string | null>(null);
   const [submitted, setSubmitted] = useState<{ line: string; stop: string } | null>(
@@ -138,12 +138,12 @@ function BusPage() {
       setError("Please enter a bus route number");
       return;
     }
-    if (!selectedStopId) {
+    if (!selectedStopIds) {
       setLookupError("Please select a stop from the list before searching.");
       return;
     }
     setError(null);
-    setSubmitted({ line: l, stop: selectedStopId });
+    setSubmitted({ line: l, stop: selectedStopIds });
   };
 
   const onLookup = async () => {
@@ -152,7 +152,7 @@ function BusPage() {
     setLookupLoading(true);
     setLookupError(null);
     setNearbyStops([]);
-    setSelectedStopId("");
+    setSelectedStopIds("");
     try {
       const res = await lookupStops({ data: { address: a } });
       if (res.error) {
@@ -237,13 +237,17 @@ function BusPage() {
               </div>
               <ul className="max-h-64 overflow-y-auto">
                 {nearbyStops.map((s) => {
-                  const active = selectedStopId === s.stopId;
+                  const ids = (s.stopIds && s.stopIds.length > 0
+                    ? s.stopIds
+                    : [s.stopId]
+                  ).join(",");
+                  const active = selectedStopIds === ids;
                   return (
-                    <li key={s.stopId}>
+                    <li key={ids}>
                       <button
                         type="button"
                         onClick={() => {
-                          setSelectedStopId(s.stopId);
+                          setSelectedStopIds(ids);
                           setLookupError(null);
                         }}
                         className={`flex w-full items-start justify-between gap-3 rounded-lg px-3 py-2 text-left transition ${
@@ -285,7 +289,7 @@ function BusPage() {
           <button
             type="submit"
             className="w-full rounded-xl bg-red-600 px-4 py-3 text-base font-bold text-white transition hover:bg-red-500 disabled:opacity-50"
-            disabled={!busLine.trim() || !selectedStopId}
+            disabled={!busLine.trim() || !selectedStopIds}
           >
             Search
           </button>
