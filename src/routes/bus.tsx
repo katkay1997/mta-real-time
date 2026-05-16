@@ -28,6 +28,7 @@ type Visit = {
   expectedEpoch: number | null;
   stopsAway: number | null;
   proximity: string;
+  directionRef: string;
 };
 
 type Vehicle = {
