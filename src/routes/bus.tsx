@@ -44,6 +44,14 @@ function etaColor(min: number | null): string {
   return "#22C55E";
 }
 
+function sanitizeBusLine(raw: string): string {
+  const up = raw.trim().toUpperCase().replace(/\s+/g, " ");
+  if (!up) return "";
+  const isSBS = /(\s|-)?SBS$/.test(up) || /\+$/.test(up);
+  const base = up.replace(/(\s|-)?SBS$/, "").replace(/\+$/, "").replace(/\s+/g, "");
+  return isSBS ? `${base}+` : base;
+}
+
 function BusPage() {
   const fetchBus = useServerFn(getBusArrivals);
   const lookupStops = useServerFn(findStopsByAddress);
@@ -74,7 +82,7 @@ function BusPage() {
       setError(null);
       try {
         const result = await fetchBus({
-          data: { line: line.toUpperCase(), stop: stopId },
+          data: { line, stop: stopId },
           signal: ac.signal,
         });
         if (ac.signal.aborted) return;
@@ -124,12 +132,16 @@ function BusPage() {
 
   const onSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const l = busLine.trim();
-    if (!l) return;
+    const l = sanitizeBusLine(busLine);
+    if (!l) {
+      setError("Please enter a bus route number");
+      return;
+    }
     if (!selectedStopId) {
       setLookupError("Please select a stop from the list before searching.");
       return;
     }
+    setError(null);
     setSubmitted({ line: l, stop: selectedStopId });
   };
 
