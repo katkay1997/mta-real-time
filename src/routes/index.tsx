@@ -40,7 +40,8 @@ function trainColors(t: string): { bg: string; fg: string } {
 }
 
 function Bullet({ line, size = 28 }: { line: string; size?: number }) {
-  if (line === "FX" || line === "7X") return null;
+  const up = String(line).toUpperCase();
+  if (up === "FX" || up === "7X") return null;
   const c = trainColors(line);
   const fontSize = Math.round(size * 0.55);
   return (
