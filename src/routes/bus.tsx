@@ -331,52 +331,93 @@ function BusPage() {
               </div>
             )}
 
-            {visits.length > 0 && (
-              <ul className="mt-4 space-y-2">
-                {visits.slice(0, 5).map((v, i) => (
-                  <li
-                    key={`${v.route}-${i}-${v.expectedEpoch ?? i}`}
-                    className="flex items-center gap-3 rounded-xl border border-white/10 bg-black/30 px-3 py-3"
-                  >
-                    <span
-                      className="inline-flex h-9 min-w-[44px] shrink-0 items-center justify-center rounded-full px-2 text-sm font-bold text-white"
-                      style={{ backgroundColor: "#0039A6" }}
-                    >
-                      🚌 {v.route}
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate text-base font-bold text-white">
-                        {v.destination}
-                      </div>
-                      <div className="flex flex-wrap items-center gap-2 text-xs text-neutral-400">
-                        {v.stopsAway != null && (
-                          <span>
-                            {v.stopsAway} stop{v.stopsAway === 1 ? "" : "s"} away
-                          </span>
-                        )}
-                        {v.proximity && (
-                          <span className="rounded-full bg-blue-500/20 px-2 py-0.5 text-[11px] font-semibold text-blue-200">
-                            {v.proximity}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <div
-                        className="text-2xl font-extrabold leading-none tabular-nums"
-                        style={{ color: etaColor(v.etaMin) }}
-                      >
-                        {v.etaMin == null
-                          ? "—"
-                          : v.etaMin <= 0
-                            ? "Now"
-                            : `${v.etaMin} min`}
-                      </div>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            )}
+            {!loading && !error && visits.length > 0 && (() => {
+              const dir0 = visits.filter((v) => v.directionRef === "0");
+              const dir1 = visits.filter((v) => v.directionRef === "1");
+              const other = visits.filter(
+                (v) => v.directionRef !== "0" && v.directionRef !== "1",
+              );
+              const groups: { key: string; label: string; items: Visit[] }[] = [
+                {
+                  key: "0",
+                  label: dir0[0]?.destination ?? "Direction 1",
+                  items: dir0,
+                },
+                {
+                  key: "1",
+                  label: dir1[0]?.destination ?? "Direction 2",
+                  items: dir1,
+                },
+              ];
+              if (other.length > 0) {
+                groups.push({
+                  key: "other",
+                  label: other[0]?.destination ?? "Other",
+                  items: other,
+                });
+              }
+              return (
+                <div className="mt-4 space-y-5">
+                  {groups.map((g) => (
+                    <section key={g.key}>
+                      <h3 className="mb-2 text-[11px] font-bold uppercase tracking-widest text-neutral-400">
+                        To {g.label}
+                      </h3>
+                      {g.items.length === 0 ? (
+                        <div className="rounded-xl border border-white/10 bg-black/30 px-4 py-4 text-center text-sm text-neutral-400">
+                          No active buses in this direction
+                        </div>
+                      ) : (
+                        <ul className="space-y-2">
+                          {g.items.slice(0, 3).map((v, i) => (
+                            <li
+                              key={`${g.key}-${v.route}-${i}-${v.expectedEpoch ?? i}`}
+                              className="flex items-center gap-3 rounded-xl border border-white/10 bg-black/30 px-3 py-3"
+                            >
+                              <span
+                                className="inline-flex h-9 min-w-[44px] shrink-0 items-center justify-center rounded-full px-2 text-sm font-bold text-white"
+                                style={{ backgroundColor: "#0039A6" }}
+                              >
+                                🚌 {v.route}
+                              </span>
+                              <div className="min-w-0 flex-1">
+                                <div className="truncate text-base font-bold text-white">
+                                  {v.destination}
+                                </div>
+                                <div className="flex flex-wrap items-center gap-2 text-xs text-neutral-400">
+                                  {v.stopsAway != null && (
+                                    <span>
+                                      {v.stopsAway} stop{v.stopsAway === 1 ? "" : "s"} away
+                                    </span>
+                                  )}
+                                  {v.proximity && (
+                                    <span className="rounded-full bg-blue-500/20 px-2 py-0.5 text-[11px] font-semibold text-blue-200">
+                                      {v.proximity}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                              <div className="text-right">
+                                <div
+                                  className="text-2xl font-extrabold leading-none tabular-nums"
+                                  style={{ color: etaColor(v.etaMin) }}
+                                >
+                                  {v.etaMin == null
+                                    ? "—"
+                                    : v.etaMin <= 0
+                                      ? "Now"
+                                      : `${v.etaMin} min`}
+                                </div>
+                              </div>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </section>
+                  ))}
+                </div>
+              );
+            })()}
 
             {vehicles.length > 0 && (
               <section className="mt-6 rounded-xl border border-white/10 bg-black/30 p-4">
