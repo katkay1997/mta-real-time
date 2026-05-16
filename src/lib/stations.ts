@@ -9,9 +9,14 @@ export type Station = {
   lines: string[];
 };
 
+const BLOCKED_LINES = new Set(["FX", "7X"]);
+function isBlockedLine(l: string): boolean {
+  return BLOCKED_LINES.has(String(l).toUpperCase());
+}
+
 export const STATIONS = (stopsData as Station[]).map((s) => ({
   ...s,
-  lines: s.lines.filter((l) => l !== "FX" && l !== "7X"),
+  lines: s.lines.filter((l) => !isBlockedLine(l)),
 }));
 const STATION_BY_ID = new Map<string, Station>(STATIONS.map((s) => [s.id, s]));
 
