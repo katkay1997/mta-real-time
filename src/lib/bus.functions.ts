@@ -37,6 +37,7 @@ function epochOf(iso: string | undefined): number | null {
   return Number.isNaN(t) ? null : Math.floor(t / 1000);
 }
 
+export const getBusArrivals = createServerFn({ method: "POST" })
   .inputValidator((input: { line: string; stop: string }) => {
     const rawIn = String(input?.line ?? "").trim().toUpperCase().replace(/\s+/g, " ");
     const stop = String(input?.stop ?? "").trim().slice(0, 16);
