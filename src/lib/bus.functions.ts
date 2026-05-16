@@ -7,6 +7,7 @@ type Visit = {
   expectedEpoch: number | null;
   stopsAway: number | null;
   proximity: string;
+  directionRef: string;
 };
 
 type Vehicle = {
@@ -105,6 +106,12 @@ export const getBusArrivals = createServerFn({ method: "POST" })
               ? j.PublishedLineName[0]
               : j.PublishedLineName)) ||
           (j.LineRef ? String(j.LineRef).split("_").pop() : data.line);
+        const dirRefRaw =
+          j.DirectionRef != null
+            ? Array.isArray(j.DirectionRef)
+              ? j.DirectionRef[0]
+              : j.DirectionRef
+            : "";
         return {
           route: String(route).toUpperCase(),
           destination: dest || "—",
@@ -115,6 +122,7 @@ export const getBusArrivals = createServerFn({ method: "POST" })
               ? call.NumberOfStopsAway
               : null,
           proximity: call.ArrivalProximityText || "",
+          directionRef: String(dirRefRaw),
         };
       });
       visits.sort((a, b) => (a.etaMin ?? 999) - (b.etaMin ?? 999));
