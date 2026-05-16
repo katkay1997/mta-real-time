@@ -19,6 +19,7 @@ type Vehicle = {
 
 export type NearbyStop = {
   stopId: string;
+  stopIds: string[];
   name: string;
   routes: string[];
   lat: number;
@@ -41,16 +42,20 @@ function epochOf(iso: string | undefined): number | null {
 export const getBusArrivals = createServerFn({ method: "POST" })
   .inputValidator((input: { line: string; stop: string }) => {
     const rawIn = String(input?.line ?? "").trim().toUpperCase().replace(/\s+/g, " ");
-    const stop = String(input?.stop ?? "").trim().slice(0, 16);
+    const stopRaw = String(input?.stop ?? "").trim().slice(0, 256);
     if (!rawIn) throw new Error("Please enter a bus route number");
-    if (!stop) throw new Error("stop is required");
+    if (!stopRaw) throw new Error("stop is required");
     // Detect SBS: " SBS", "-SBS", or trailing "SBS" → "+"
     const isSBS = /(\s|-)?SBS$/.test(rawIn) || /\+$/.test(rawIn);
     const base = rawIn.replace(/(\s|-)?SBS$/, "").replace(/\+$/, "").replace(/\s+/g, "");
     if (!/^[A-Z]{1,3}[0-9]{1,3}$/.test(base)) throw new Error("invalid line");
     const line = isSBS ? `${base}+` : base;
-    if (!/^[0-9]+$/.test(stop)) throw new Error("invalid stop id");
-    return { line, stop };
+    const stops = stopRaw.split(",").map((s) => s.trim()).filter(Boolean);
+    if (stops.length === 0) throw new Error("stop is required");
+    for (const s of stops) {
+      if (!/^[0-9]+$/.test(s)) throw new Error("invalid stop id");
+    }
+    return { line, stops };
   })
   .handler(async ({ data }) => {
     const apiKey = process.env.MTA_BUS_API_KEY;
@@ -63,37 +68,46 @@ export const getBusArrivals = createServerFn({ method: "POST" })
     }
 
     const lineRef = `MTA NYCT_${data.line}`;
-    const smUrl = `https://bustime.mta.info/api/siri/stop-monitoring.json?key=${encodeURIComponent(
-      apiKey,
-    )}&MonitoringRef=${encodeURIComponent(data.stop)}&LineRef=${encodeURIComponent(
-      lineRef,
-    )}&version=2`;
     const vmUrl = `https://bustime.mta.info/api/siri/vehicle-monitoring.json?key=${encodeURIComponent(
       apiKey,
     )}&LineRef=${encodeURIComponent(lineRef)}&version=2`;
 
     try {
-      const [smRes, vmRes] = await Promise.all([fetch(smUrl), fetch(vmUrl)]);
-      if (!smRes.ok) {
-        return {
-          error: `Stop monitoring failed (${smRes.status})`,
-          visits: [] as Visit[],
-          vehicles: [] as Vehicle[],
-        };
+      const smPromises = data.stops.map((s) =>
+        fetch(
+          `https://bustime.mta.info/api/siri/stop-monitoring.json?key=${encodeURIComponent(
+            apiKey,
+          )}&MonitoringRef=${encodeURIComponent(s)}&LineRef=${encodeURIComponent(
+            lineRef,
+          )}&version=2`,
+        ),
+      );
+      const [smResults, vmRes] = await Promise.all([
+        Promise.all(smPromises),
+        fetch(vmUrl),
+      ]);
+
+      const monitored: any[] = [];
+      let firstErr: string | null = null;
+      for (const smRes of smResults) {
+        if (!smRes.ok) {
+          firstErr = firstErr ?? `Stop monitoring failed (${smRes.status})`;
+          continue;
+        }
+        const sm: any = await smRes.json();
+        const smDelivery = sm?.Siri?.ServiceDelivery?.StopMonitoringDelivery?.[0];
+        const errText =
+          smDelivery?.ErrorCondition?.OtherError?.ErrorText ||
+          sm?.Siri?.ServiceDelivery?.ErrorCondition?.OtherError?.ErrorText;
+        if (errText && !firstErr) firstErr = String(errText);
+        const list: any[] = smDelivery?.MonitoredStopVisit ?? [];
+        for (const v of list) monitored.push(v);
       }
-      const sm: any = await smRes.json();
+      if (monitored.length === 0 && firstErr) {
+        return { error: firstErr, visits: [], vehicles: [] };
+      }
       const vm: any = vmRes.ok ? await vmRes.json() : null;
 
-      const smDelivery =
-        sm?.Siri?.ServiceDelivery?.StopMonitoringDelivery?.[0];
-      const errText =
-        smDelivery?.ErrorCondition?.OtherError?.ErrorText ||
-        sm?.Siri?.ServiceDelivery?.ErrorCondition?.OtherError?.ErrorText;
-      if (errText) {
-        return { error: String(errText), visits: [], vehicles: [] };
-      }
-
-      const monitored: any[] = smDelivery?.MonitoredStopVisit ?? [];
       const visits: Visit[] = monitored.map((v) => {
         const j = v.MonitoredVehicleJourney || {};
         const call = j.MonitoredCall || {};
@@ -219,6 +233,7 @@ export const findStopsByAddress = createServerFn({ method: "POST" })
       const list: any[] = stopsJson?.data?.stops ?? stopsJson?.data?.list ?? [];
       const stops: NearbyStop[] = list.map((s) => ({
         stopId: String(s.id ?? s.code ?? "").split("_").pop() ?? "",
+        stopIds: [],
         name: String(s.name ?? "—"),
         routes: Array.isArray(s.routeIds)
           ? s.routeIds.map((r: string) => String(r).split("_").pop() ?? r)
@@ -231,14 +246,30 @@ export const findStopsByAddress = createServerFn({ method: "POST" })
         lon: Number(s.lon ?? 0),
       }));
       const filtered = stops.filter((s) => s.stopId);
-      if (filtered.length === 0) {
+      // Merge by normalized name so a single corner with multiple
+      // direction-specific stop IDs becomes one entry.
+      const byName = new Map<string, NearbyStop>();
+      for (const s of filtered) {
+        const key = s.name.trim().toLowerCase();
+        const existing = byName.get(key);
+        if (existing) {
+          if (!existing.stopIds.includes(s.stopId)) existing.stopIds.push(s.stopId);
+          for (const r of s.routes) {
+            if (!existing.routes.includes(r)) existing.routes.push(r);
+          }
+        } else {
+          byName.set(key, { ...s, stopIds: [s.stopId] });
+        }
+      }
+      const merged = Array.from(byName.values());
+      if (merged.length === 0) {
         return {
           error:
             "No bus stops found near this address. Try a nearby intersection.",
           stops: [] as NearbyStop[],
         };
       }
-      return { error: null, stops: filtered };
+      return { error: null, stops: merged };
     } catch (err) {
       console.error("findStopsByAddress error", err);
       return {
