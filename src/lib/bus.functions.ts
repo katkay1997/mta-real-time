@@ -246,11 +246,19 @@ export const findStopsByAddress = createServerFn({ method: "POST" })
         lon: Number(s.lon ?? 0),
       }));
       const filtered = stops.filter((s) => s.stopId);
-      // Merge by normalized name so a single corner with multiple
-      // direction-specific stop IDs becomes one entry.
+      // Merge by direction-agnostic key: split the stop name on
+      // "/" or "&", sort the parts alphabetically, rejoin and
+      // lowercase. This collapses reversed cross-street names
+      // (e.g. "WASHINGTON AV/BERGEN ST" and
+      // "BERGEN ST/WASHINGTON AV") into a single entry.
       const byName = new Map<string, NearbyStop>();
       for (const s of filtered) {
-        const key = s.name.trim().toLowerCase();
+        const key = s.name
+          .split(/[/&]/)
+          .map((p) => p.trim().toLowerCase())
+          .filter(Boolean)
+          .sort()
+          .join("/");
         const existing = byName.get(key);
         if (existing) {
           if (!existing.stopIds.includes(s.stopId)) existing.stopIds.push(s.stopId);
