@@ -67,7 +67,11 @@ export const getBusArrivals = createServerFn({ method: "POST" })
       };
     }
 
-    const lineRef = `MTA NYCT_${data.line}`;
+    // Q and BM/QM/SIM express routes use MTA Bus Company operator prefix
+const queensBusPattern = /^(Q|BM|QM|SIM)/i;
+const lineRef = queensBusPattern.test(data.line)
+  ? `MTA_${data.line}`
+  : `MTA NYCT_${data.line}`;
     const vmUrl = `https://bustime.mta.info/api/siri/vehicle-monitoring.json?key=${encodeURIComponent(
       apiKey,
     )}&LineRef=${encodeURIComponent(lineRef)}&version=2`;
