@@ -203,7 +203,12 @@ export const getBusArrivals = createServerFn({ method: "POST" })
 
 export const findStopsByAddress = createServerFn({ method: "POST" })
   .inputValidator((input: { address: string }) => {
-    const address = String(input?.address ?? "").trim().slice(0, 200);
+    // Clean input and automatically swap a standalone "AV" or "av" to "AVE" for OpenStreetMap
+    const cleanedAddress = String(input?.address ?? "")
+      .trim()
+      .replace(/\bav\b/i, "AVE");
+
+    const address = cleanedAddress.slice(0, 200);
     if (!address) throw new Error("address is required");
     return { address };
   })
@@ -216,10 +221,11 @@ export const findStopsByAddress = createServerFn({ method: "POST" })
       };
     }
     try {
+      // Append NYC context if not already present to help Nominatim resolve intersections
       const addressWithContext =
         /new york|nyc|brooklyn|queens|bronx|manhattan|staten island/i.test(
           data.address,
-        ) ? data.address
+        )          ? data.address
           : `${data.address}, New York City, NY`;
           
       const geoUrl = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(
@@ -325,3 +331,4 @@ export const findStopsByAddress = createServerFn({ method: "POST" })
       };
     }
   });
+  
