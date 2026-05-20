@@ -191,9 +191,13 @@ export const findStopsByAddress = createServerFn({ method: "POST" })
       };
     }
     try {
-      const geoUrl = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(
-        data.address,
-      )}&format=json&limit=1`;
+    // Append NYC context if not already present to help Nominatim resolve intersections
+const addressWithContext = /new york|nyc|brooklyn|queens|bronx|manhattan|staten island/i.test(data.address)
+  ? data.address
+  : `${data.address}, New York City, NY`;
+const geoUrl = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(
+  addressWithContext,
+)}&format=json&limit=1`;
       const geoRes = await fetch(geoUrl, {
         headers: {
           "User-Agent": "MTA-Subway-Feed/1.0 (lovable.app)",
