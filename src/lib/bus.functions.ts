@@ -75,7 +75,7 @@ const lineRef = queensBusPattern.test(data.line)
     const vmUrl = `https://bustime.mta.info/api/siri/vehicle-monitoring.json?key=${encodeURIComponent(
       apiKey,
     )}&LineRef=${encodeURIComponent(lineRef)}&version=2`;
-
+ 
     try {
       const smPromises = data.stops.map((s) =>
         fetch(
