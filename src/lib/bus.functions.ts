@@ -46,7 +46,7 @@ function epochOf(iso: string | undefined): number | null {
 // Q, BM, QM, and SIM express routes use MTA Bus Company operator prefix ("MTA_")
 // All other NYC routes use NYCT prefix ("MTA NYCT_")
 function buildLineRef(line: string): string {
-  const mtaBusPattern = /^(Q|BM|QM|SIM)/i;
+  const mtaBusPattern = /^(BM|QM|SIM)/i;
   return mtaBusPattern.test(line) ? `MTA_${line}` : `MTA NYCT_${line}`;
 }
 
@@ -205,8 +205,9 @@ export const findStopsByAddress = createServerFn({ method: "POST" })
   .inputValidator((input: { address: string }) => {
     // Clean input and automatically swap a standalone "AV" or "av" to "AVE" for OpenStreetMap
     const cleanedAddress = String(input?.address ?? "")
-      .trim()
-      .replace(/\bav\b/i, "AVE");
+  .trim()
+  .replace(/\bav\b/i, "AVE")
+  .replace("/", " and ");
 
     const address = cleanedAddress.slice(0, 200);
     if (!address) throw new Error("address is required");
