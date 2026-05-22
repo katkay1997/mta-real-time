@@ -43,13 +43,22 @@ function epochOf(iso: string | undefined): number | null {
   return Number.isNaN(t) ? null : Math.floor(t / 1000);
 }
 
-// Q, BM, QM, and SIM express routes use MTA Bus Company operator prefix ("MTA_")
-// All other NYC routes use NYCT prefix ("MTA NYCT_")
-function buildLineRef(line: string): string {
-  const mtaBusPattern = /^(BM|QM|SIM)/i;
-  return mtaBusPattern.test(line) ? `MTA_${line}` : `MTA NYCT_${line}`;
-}
+const MTA_BUS_ROUTES = new Set([
+  "BX1","BX2","BX3","BX4","BX4A","BX5","BX6","BX7","BX8","BX9","BX10",
+  "BX11","BX12","BX13","BX15","BX16","BX17","BX18","BX19","BX20","BX21",
+  "BX22","BX23","BX24","BX25","BX26","BX27","BX28","BX29","BX30","BX31",
+  "BX32","BX33","BX34","BX35","BX36","BX38","BX39","BX40","BX41","BX42",
+  "Q44","Q50","Q58","Q60","BM1","BM2","BM3","BM4","BM5",
+  "QM1","QM2","QM3","QM4","QM5","QM6","QM7","QM8","QM10","QM11","QM12",
+  "QM15","QM16","QM17","QM18","QM20","QM21","QM25","QM31","QM32","QM34","QM35","QM36",
+  "Q111","Q112","Q113","Q114","Q115",
+  "SIM1","SIM1C","SIM2","SIM3","SIM3C","SIM4","SIM4C","SIM4X","SIM5","SIM6",
+  "SIM7","SIM8","SIM8X","SIM9","SIM10","SIM11","SIM15","SIM22","SIM25","SIM26","SIM30","SIM31","SIM32","SIM33","SIM34","SIM35"
+]);
 
+function buildLineRef(line: string): string {
+  return MTA_BUS_ROUTES.has(line.toUpperCase()) ? `MTA_${line}` : `MTA NYCT_${line}`;
+}
 // ==========================================
 // SERVER FUNCTIONS
 // ==========================================
